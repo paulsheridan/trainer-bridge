@@ -3,7 +3,9 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::stream::StreamExt;
 use std::error::Error;
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio::time::sleep;
+use tokio_tungstenite::accept_async;
 
 const ACCUMULATED_TORQUE_PRESENT: u16 = 0x0004; // bit 2
 const WHEEL_REVOLUTION_DATA_PRESENT: u16 = 0x0010; // bit 4
@@ -16,7 +18,24 @@ struct Snapshot {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    tokio::spawn(run_trainer_bridge());
+    run_websocket_server().await?;
+    Ok(())
+}
+
+async fn run_websocket_server() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let listener = TcpListener::bind("0.0.0.0:8765").await?;
+    loop {
+        let (stream, addr) = listener.accept().await?;
+        tokio::spawn(async move {
+            let ws_stream = accept_async(stream).await.unwrap();
+            println!("Godot connected: {addr}");
+        });
+    }
+}
+
+async fn run_trainer_bridge() -> Result<(), Box<dyn Error + Send + Sync>> {
     let manager: Manager = Manager::new().await?;
     let devices: Vec<Adapter> = manager.adapters().await?;
     let central = devices.into_iter().next().ok_or("No devices found.")?;
