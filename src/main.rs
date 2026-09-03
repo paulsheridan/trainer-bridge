@@ -4,6 +4,7 @@ use futures::stream::StreamExt;
 use std::error::Error;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_tungstenite::accept_async;
 
@@ -19,7 +20,8 @@ struct Snapshot {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    tokio::spawn(run_trainer_bridge());
+    let (tx, _rx) = broadcast::channel::<String>(16);
+    tokio::spawn(run_trainer_bridge(tx.clone()));
     run_websocket_server().await?;
     Ok(())
 }
@@ -35,7 +37,9 @@ async fn run_websocket_server() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 }
 
-async fn run_trainer_bridge() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn run_trainer_bridge(
+    tx: broadcast::Sender<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let manager: Manager = Manager::new().await?;
     let devices: Vec<Adapter> = manager.adapters().await?;
     let central = devices.into_iter().next().ok_or("No devices found.")?;
@@ -114,7 +118,7 @@ async fn run_trainer_bridge() -> Result<(), Box<dyn Error + Send + Sync>> {
             revs,
         };
         let snapshot_json = serde_json::to_string(&snapshot)?;
-        println!("{snapshot_json}");
+        let _ = tx.send(snapshot_json);
     }
     Ok(())
 }
