@@ -1,5 +1,6 @@
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, bleuuid::uuid_from_u16};
 use btleplug::platform::{Adapter, Manager, Peripheral};
+use futures::SinkExt;
 use futures::stream::StreamExt;
 use std::error::Error;
 use std::time::Duration;
@@ -7,6 +8,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 
 const ACCUMULATED_TORQUE_PRESENT: u16 = 0x0004; // bit 2
 const WHEEL_REVOLUTION_DATA_PRESENT: u16 = 0x0010; // bit 4
@@ -22,17 +24,22 @@ struct Snapshot {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (tx, _rx) = broadcast::channel::<String>(16);
     tokio::spawn(run_trainer_bridge(tx.clone()));
-    run_websocket_server().await?;
+    run_websocket_server(tx.clone()).await?;
     Ok(())
 }
 
-async fn run_websocket_server() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn run_websocket_server(
+    tx: broadcast::Sender<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = TcpListener::bind("0.0.0.0:8765").await?;
     loop {
         let (stream, addr) = listener.accept().await?;
         tokio::spawn(async move {
             let ws_stream = accept_async(stream).await.unwrap();
-            println!("Godot connected: {addr}");
+            let mut rx = tx.subscribe();
+            while let Ok(snapshot) = rx.recv().await {
+                let _ = ws_stream.send(Message::Text(snapshot)).await;
+            }
         });
     }
 }
